@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bulut Adımsayar</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f0f2f5; text-align: center; margin: 0; padding: 20px; }
+        .card { background: white; border-radius: 15px; padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); max-width: 400px; margin: 20px auto; }
+        h1 { color: #1a73e8; }
+        .metric { font-size: 24px; font-weight: bold; margin: 10px 0; color: #333; }
+        .label { font-size: 14px; color: #666; text-transform: uppercase; }
+        button { background: #1a73e8; color: white; border: none; padding: 12px 24px; font-size: 16px; border-radius: 25px; cursor: pointer; margin: 10px; transition: 0.3s; }
+        button:hover { background: #1557b0; }
+        #stopBtn { background: #d93025; }
+        #stopBtn:hover { background: #b31412; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h1>Adımsayar</h1>
+    <hr>
+    <div class="label">Adım Sayısı</div>
+    <div id="steps" class="metric">0</div>
+    
+    <div class="label">Mesafe</div>
+    <div id="distance" class="metric">0 m</div>
+    
+    <div class="label">Süre</div>
+    <div id="duration" class="metric">00:00</div>
+    
+    <div class="label">Tahmini Kalori</div>
+    <div id="calories" class="metric">0 kcal</div>
+</div>
+
+<button id="startBtn" onclick="startPedometer()">Başlat</button>
+<button id="stopBtn" onclick="stopAndSave()" style="display:none;">Bitir & Kaydet</button>
+
+<script>
+let stepCount = 0;
+let startTime, timerInterval;
+let isTracking = false;
+
+// Adım algılama eşikleri (Cihaza göre kalibre edilebilir)
+let lastX = 0, lastY = 0, lastZ = 0;
+let threshold = 11.5; // Sarsıntı eşiği
+let lastStepTime = 0;
+
+const scriptUrl = "https://script.google.com/macros/s/AKfycbwDn9miQptG1oph7xOY3PerLThtWN8FJv3K0Zpq0r0CY4MJg2jwFpvoeoZVDJ7cr32a/exec"; 
+
+async function startPedometer() {
+    // iOS için hareket sensörü izni isteme mekanizması
+    if (typeof DeviceMotionEvent.requestPermission === 'function') {
+        try {
+            const permissionState = await DeviceMotionEvent.requestPermission();
+            if (permissionState !== 'granted') {
+                alert('Sensör erişim izni reddedildi.');
+                return;
+            }
+        } catch (error) {
+            console.error(error);
+        }
+    }
+
+    // Sayaçları sıfırla ve başlat
+    stepCount = 0;
+    startTime = new Date();
+    isTracking = true;
+    
+    document.getElementById('startBtn').style.display = 'none';
+    document.getElementById('stopBtn').style.display = 'inline-block';
+    
+    // Zamanlayıcıyı başlat
+    timerInterval = setInterval(updateTimer, 1000);
+    
+    // Sensör dinleyicisini ekle
+    window.addEventListener('devicemotion', handleMotion, true);
+}
+
+function handleMotion(event) {
+    if (!isTracking) return;
+
+    let acc = event.accelerationIncludingGravity;
+    if (!acc.x) return;
+
+    // Toplam ivme vektörünü hesapla (Magnitude)
+    let magnitude = Math.sqrt(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
+    
+    let currentTime = new Date().getTime();
+    // Eşik aşıldıysa ve iki adım arasında en az 300ms varsa adım say
+    if (magnitude > threshold && (currentTime - lastStepTime) > 300) {
+        stepCount++;
+        lastStepTime = currentTime;
+        updateUI();
+    }
+}
+
+function updateUI() {
+    document.getElementById('steps').innerText = stepCount;
+    
+    // Ortalama adım boyu: 0.74 metre varsayıldı
+    let distanceMetres = (stepCount * 0.74).toFixed(1);
+    document.getElementById('distance').innerText = distanceMetres + " m";
+    
+    // Ortalama adım başına 0.045 kcal varsayıldı
+    let caloriesBurned = (stepCount * 0.045).toFixed(1);
+    document.getElementById('calories').innerText = caloriesBurned + " kcal";
+}
+
+function updateTimer() {
+    let diff = new Date() - startTime;
+    let minutes = Math.floor(diff / 60000).toString().padStart(2, '0');
+    let seconds = Math.floor((diff % 60000) / 1000).toString().padStart(2, '0');
+    document.getElementById('duration').innerText = `${minutes}:${seconds}`;
+}
+
+function stopAndSave() {
+    isTracking = false;
+    clearInterval(timerInterval);
+    window.removeEventListener('devicemotion', handleMotion, true);
+    
+    let durationSeconds = Math.floor((new Date() - startTime) / 1000);
+    let distanceMetres = parseFloat((stepCount * 0.74).toFixed(1));
+    let calories = parseFloat((stepCount * 0.045).toFixed(1));
+    let avgSpeedKmh = durationSeconds > 0 ? ((distanceMetres / durationSeconds) * 3.6).toFixed(2) : 0;
+    
+    let payload = {
+        tarih: new Date().toLocaleString('tr-TR'),
+        adimSayisi: stepCount,
+        mesafe: distanceMetres,
+        zaman: durationSeconds,
+        kalori: calories,
+        ortalamaHiz: parseFloat(avgSpeedKmh)
+    };
+
+    // Buton durumunu güncelle
+    document.getElementById('stopBtn').innerText = "Gönderiliyor...";
+    document.getElementById('stopBtn').disabled = true;
+
+    // Google Sheets'e POST isteği at
+    fetch(scriptUrl, {
+        method: "POST",
+        mode: "no-cors", // CORS hatasını engellemek için
+        cache: "no-cache",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+    })
+    .then(() => {
+        alert("Aktivite başarıyla Google E-Tablolara kaydedildi!");
+        resetApp();
+    })
+    .catch(err => {
+        alert("Hata oluştu: " + err);
+        resetApp();
+    });
+}
+
+function resetApp() {
+    document.getElementById('startBtn').style.display = 'inline-block';
+    document.getElementById('stopBtn').style.display = 'none';
+    document.getElementById('stopBtn').innerText = "Bitir & Kaydet";
+    document.getElementById('stopBtn').disabled = false;
+    document.getElementById('steps').innerText = "0";
+    document.getElementById('distance').innerText = "0 m";
+    document.getElementById('duration').innerText = "00:00";
+    document.getElementById('calories').innerText = "0 kcal";
+}
+</script>
+</body>
+</html>
