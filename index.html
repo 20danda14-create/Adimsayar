@@ -3,93 +3,126 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bulut Adımsayar</title>
+    <title>Bulut Adımsayar v2</title>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f0f2f5; text-align: center; margin: 0; padding: 20px; }
         .card { background: white; border-radius: 15px; padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); max-width: 400px; margin: 20px auto; }
-        h1 { color: #1a73e8; }
-        .metric { font-size: 24px; font-weight: bold; margin: 10px 0; color: #333; }
-        .label { font-size: 14px; color: #666; text-transform: uppercase; }
-        button { background: #1a73e8; color: white; border: none; padding: 12px 24px; font-size: 16px; border-radius: 25px; cursor: pointer; margin: 10px; transition: 0.3s; }
+        h1 { color: #1a73e8; margin-bottom: 5px; }
+        .subtitle { font-size: 12px; color: #888; margin-bottom: 15px; }
+        .metric { font-size: 26px; font-weight: bold; margin: 8px 0; color: #333; }
+        .label { font-size: 13px; color: #666; text-transform: uppercase; letter-spacing: 1px; }
+        
+        /* Kilo Giriş Alanı Tasarımı */
+        .weight-container { background: #f8f9fa; border-radius: 10px; padding: 12px; margin: 15px 0; border: 1px solid #e8eaed; }
+        .weight-container label { font-size: 14px; color: #444; font-weight: bold; display: block; margin-bottom: 5px; }
+        .weight-container input { width: 80px; padding: 6px; font-size: 16px; border-radius: 5px; border: 1px solid #dadce0; text-align: center; }
+        
+        button { background: #1a73e8; color: white; border: none; padding: 14px 28px; font-size: 16px; border-radius: 25px; cursor: pointer; margin: 10px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.15); transition: 0.3s; }
         button:hover { background: #1557b0; }
         #stopBtn { background: #d93025; }
         #stopBtn:hover { background: #b31412; }
+        hr { border: 0; height: 1px; background: #e8eaed; margin: 15px 0; }
     </style>
 </head>
 <body>
 
 <div class="card">
     <h1>Adımsayar</h1>
+    <div class="subtitle">iPhone 14 Plus & 175 cm Boy için Kalibre Edilmiştir</div>
+    
+    <div class="weight-container" id="weightBox">
+        <label for="weightInput">Kilonuz (kg)</label>
+        <input type="number" id="weightInput" min="30" max="200" step="1">
+    </div>
+    
     <hr>
+    
     <div class="label">Adım Sayısı</div>
     <div id="steps" class="metric">0</div>
     
     <div class="label">Mesafe</div>
-    <div id="distance" class="metric">0 m</div>
+    <div id="distance" class="metric">0.0 m</div>
     
     <div class="label">Süre</div>
     <div id="duration" class="metric">00:00</div>
     
-    <div class="label">Tahmini Kalori</div>
-    <div id="calories" class="metric">0 kcal</div>
+    <div class="label">Dinamik Kalori</div>
+    <div id="calories" class="metric">0.0 kcal</div>
 </div>
 
-<button id="startBtn" onclick="startPedometer()">Başlat</button>
-<button id="stopBtn" onclick="stopAndSave()" style="display:none;">Bitir & Kaydet</button>
+<button id="startBtn" onclick="startPedometer()">Yürüyüşü Başlat</button>
+<button id="stopBtn" onclick="stopAndSave()" style="display:none;">Bitir & E-Tabloya Kaydet</button>
 
 <script>
 let stepCount = 0;
 let startTime, timerInterval;
 let isTracking = false;
+let userWeight = 75; // Varsayılan kilo
 
-// Adım algılama eşikleri (Cihaza göre kalibre edilebilir)
-let lastX = 0, lastY = 0, lastZ = 0;
-let threshold = 11.5; // Sarsıntı eşiği
+// --- KALİBRASYON AYARLARI ---
+const strideLength = 0.73;  // 175 cm boy için adım boyu (metre)
+const threshold = 2.5;      // iPhone 14 Plus doğrusal ivme eşiği
 let lastStepTime = 0;
 
-const scriptUrl = "https://script.google.com/macros/s/AKfycbwDn9miQptG1oph7xOY3PerLThtWN8FJv3K0Zpq0r0CY4MJg2jwFpvoeoZVDJ7cr32a/exec"; 
+// Google Apps Script Web Uygulaması URL'nizi buraya yapıştırın
+const scriptUrl = "https://script.google.com/macros/s/AKfycbwWzsErEcwL142-REs3vf3LGUx2N-qZx-IP9Np2XvwMMT1rQei5BN0dWz5aByzVFRQS/exec"; 
+
+// Sayfa yüklendiğinde hafızadaki kiloyu getir
+document.addEventListener("DOMContentLoaded", () => {
+    const savedWeight = localStorage.getItem("pedometer_weight");
+    document.getElementById("weightInput").value = savedWeight ? savedWeight : 75;
+});
 
 async function startPedometer() {
-    // iOS için hareket sensörü izni isteme mekanizması
+    // Giriş yapılan kiloyu al ve hafızaya kaydet
+    const weightInputVal = parseFloat(document.getElementById("weightInput").value);
+    if (!weightInputVal || weightInputVal <= 0) {
+        alert("Lütfen geçerli bir kilo giriniz.");
+        return;
+    }
+    userWeight = weightInputVal;
+    localStorage.setItem("pedometer_weight", userWeight);
+
+    // iOS İvmeölçer İzin Mekanizması
     if (typeof DeviceMotionEvent.requestPermission === 'function') {
         try {
             const permissionState = await DeviceMotionEvent.requestPermission();
             if (permissionState !== 'granted') {
-                alert('Sensör erişim izni reddedildi.');
+                alert('Sensör erişim izni reddedildi. Ayarlardan tarayıcı izinlerini kontrol edin.');
                 return;
             }
         } catch (error) {
             console.error(error);
+            return;
         }
     }
 
-    // Sayaçları sıfırla ve başlat
+    // Sayaçları sıfırla ve kilitle
     stepCount = 0;
     startTime = new Date();
     isTracking = true;
     
+    // Yürüyüş esnasında kilo değişimini engellemek için girdi alanını gizle/pasif yap
+    document.getElementById('weightInput').disabled = true;
     document.getElementById('startBtn').style.display = 'none';
     document.getElementById('stopBtn').style.display = 'inline-block';
     
-    // Zamanlayıcıyı başlat
     timerInterval = setInterval(updateTimer, 1000);
-    
-    // Sensör dinleyicisini ekle
     window.addEventListener('devicemotion', handleMotion, true);
 }
 
 function handleMotion(event) {
     if (!isTracking) return;
 
-    let acc = event.accelerationIncludingGravity;
-    if (!acc.x) return;
+    let acc = event.acceleration; 
+    if (!acc || acc.x === null) return;
 
-    // Toplam ivme vektörünü hesapla (Magnitude)
+    // 3 eksenli bileşke ivme vektörü
     let magnitude = Math.sqrt(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
-    
     let currentTime = new Date().getTime();
-    // Eşik aşıldıysa ve iki adım arasında en az 300ms varsa adım say
-    if (magnitude > threshold && (currentTime - lastStepTime) > 300) {
+    
+    // iPhone 14 Plus filtreleri (Eşik: 2.5, Gecikme: 350ms)
+    if (magnitude > threshold && (currentTime - lastStepTime) > 350) {
         stepCount++;
         lastStepTime = currentTime;
         updateUI();
@@ -99,13 +132,14 @@ function handleMotion(event) {
 function updateUI() {
     document.getElementById('steps').innerText = stepCount;
     
-    // Ortalama adım boyu: 0.74 metre varsayıldı
-    let distanceMetres = (stepCount * 0.74).toFixed(1);
-    document.getElementById('distance').innerText = distanceMetres + " m";
+    // Mesafe hesabı (Metre)
+    let distanceMetres = stepCount * strideLength;
+    document.getElementById('distance').innerText = distanceMetres.toFixed(1) + " m";
     
-    // Ortalama adım başına 0.045 kcal varsayıldı
-    let caloriesBurned = (stepCount * 0.045).toFixed(1);
-    document.getElementById('calories').innerText = caloriesBurned + " kcal";
+    // Bilimsel Kalori Hesabı: Kilo x Mesafe(km) x 1.03
+    let distanceKm = distanceMetres / 1000;
+    let caloriesBurned = userWeight * distanceKm * 1.03;
+    document.getElementById('calories').innerText = caloriesBurned.toFixed(1) + " kcal";
 }
 
 function updateTimer() {
@@ -121,8 +155,9 @@ function stopAndSave() {
     window.removeEventListener('devicemotion', handleMotion, true);
     
     let durationSeconds = Math.floor((new Date() - startTime) / 1000);
-    let distanceMetres = parseFloat((stepCount * 0.74).toFixed(1));
-    let calories = parseFloat((stepCount * 0.045).toFixed(1));
+    let distanceMetres = parseFloat((stepCount * strideLength).toFixed(1));
+    let distanceKm = distanceMetres / 1000;
+    let calories = parseFloat((userWeight * distanceKm * 1.03).toFixed(1));
     let avgSpeedKmh = durationSeconds > 0 ? ((distanceMetres / durationSeconds) * 3.6).toFixed(2) : 0;
     
     let payload = {
@@ -131,40 +166,40 @@ function stopAndSave() {
         mesafe: distanceMetres,
         zaman: durationSeconds,
         kalori: calories,
-        ortalamaHiz: parseFloat(avgSpeedKmh)
+        ortalamaHiz: parseFloat(avgSpeedKmh),
+        kilo: userWeight
     };
 
-    // Buton durumunu güncelle
-    document.getElementById('stopBtn').innerText = "Gönderiliyor...";
+    document.getElementById('stopBtn').innerText = "Veri Gönderiliyor...";
     document.getElementById('stopBtn').disabled = true;
 
-    // Google Sheets'e POST isteği at
     fetch(scriptUrl, {
         method: "POST",
-        mode: "no-cors", // CORS hatasını engellemek için
+        mode: "no-cors",
         cache: "no-cache",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
     })
     .then(() => {
-        alert("Aktivite başarıyla Google E-Tablolara kaydedildi!");
+        alert("Harika! Aktiviteniz ve kalori verileriniz Google E-Tablolara işlendi.");
         resetApp();
     })
     .catch(err => {
-        alert("Hata oluştu: " + err);
+        alert("Kayıt esnasında bir hata oluştu: " + err);
         resetApp();
     });
 }
 
 function resetApp() {
+    document.getElementById('weightInput').disabled = false;
     document.getElementById('startBtn').style.display = 'inline-block';
     document.getElementById('stopBtn').style.display = 'none';
-    document.getElementById('stopBtn').innerText = "Bitir & Kaydet";
+    document.getElementById('stopBtn').innerText = "Bitir & E-Tabloya Kaydet";
     document.getElementById('stopBtn').disabled = false;
     document.getElementById('steps').innerText = "0";
-    document.getElementById('distance').innerText = "0 m";
+    document.getElementById('distance').innerText = "0.0 m";
     document.getElementById('duration').innerText = "00:00";
-    document.getElementById('calories').innerText = "0 kcal";
+    document.getElementById('calories').innerText = "0.0 kcal";
 }
 </script>
 </body>
